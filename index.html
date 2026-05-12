@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="robots" content="noindex, nofollow">
@@ -35,6 +35,7 @@
     .menu-drawer h3 { color: var(--primary); border-bottom: 2px solid var(--primary); padding-bottom: 12px; margin-top: 0; }
     .menu-link { display: block; padding: 18px 0; border-bottom: 1px solid #f0f0f0; text-decoration: none; color: var(--text); font-weight: bold; }
     #loadingOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: bold; color: var(--primary); }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -92,7 +93,7 @@ const GAS_URL = "https://script.google.com/macros/s/AKfycbwRMixPJjGvHPn5ywLkg_Xa
 
 let appData = {};
 let selectedIncomeTax = 0;
-const RESIDENCE_TAX = 0.1;
+const RESIDENCE_TAX = 0.1; // 10%固定
 
 window.onload = () => {
   fetch(GAS_URL)
@@ -134,7 +135,6 @@ function addRouteRow() {
     if (a.isCategory) return `<option value="${a.name}" disabled style="background:#eee; font-weight:bold; color:#E60012; padding:5px 0;">${a.name}</option>`;
     return `<option value="${a.name}">${a.name}</option>`;
   }).join('');
-
   const html = `<div class="route-card" id="row-${id}"><select id="dep-${id}" onchange="updateArrivalOptions('${id}')"><option value="">出発地</option>${optionsHtml}</select><span class="material-icons arrow-icon">arrow_forward</span><select id="arr-${id}" onchange="calculate()"><option value="">到着地</option>${optionsHtml}</select><span class="material-icons" style="color:#ddd; cursor:pointer; font-size:26px; margin-left:4px;" onclick="removeRow('${id}')">cancel</span></div>`;
   document.getElementById('routeContainer').insertAdjacentHTML('beforeend', html);
 }
@@ -163,27 +163,49 @@ function saveSettings() {
   calculate();
 }
 
+/**
+ * 修正された運賃計算ロジック
+ * 大人・子供それぞれの運賃とPFCを個別に計算し、合計します。
+ */
 function calculate() {
   let totalLT00 = 0, totalLTZL = 0;
   const adults = parseInt(document.getElementById('adultCount').value) || 0;
   const children = parseInt(document.getElementById('childCount').value) || 0;
   let detailHtml = "";
+
   document.querySelectorAll('.route-card').forEach(row => {
     const id = row.id.split('-')[1];
     const dep = document.getElementById(`dep-${id}`).value;
     const arr = document.getElementById(`arr-${id}`).value;
+    
     if (dep && arr) {
       const route = appData.routes.find(r => r.name === `${dep}=${arr}` || r.name === `${arr}=${dep}`);
       const dPort = appData.airports.find(a => a.name === dep && !a.isCategory);
       const aPort = appData.airports.find(a => a.name === arr && !a.isCategory);
+      
       if (route && dPort && aPort) {
-        const fareA = route.fareA, pfcSumA = dPort.pfcA + aPort.pfcA;
-        const lt00A = (fareA * selectedIncomeTax) + (fareA * RESIDENCE_TAX) + pfcSumA, ltzlA = fareA + pfcSumA;
-        const fareC = route.fareC, pfcSumC = dPort.pfcC + aPort.pfcC;
-        const lt00C = (fareC * selectedIncomeTax) + (fareC * RESIDENCE_TAX) + pfcSumC, ltzlC = fareC + pfcSumC;
+        // --- 大人(1名あたり)の計算 ---
+        // LT00 = (基本運賃×所得税) + (基本運賃×住民税) + 出発PFC + 到着PFC
+        const lt00A = (route.fareA * selectedIncomeTax) + (route.fareA * RESIDENCE_TAX) + dPort.pfcA + aPort.pfcA;
+        // LTZL = 基本運賃 + 出発PFC + 到着PFC
+        const ltzlA = route.fareA + dPort.pfcA + aPort.pfcA;
+
+        // --- 子供(1名あたり)の計算 ---
+        const lt00C = (route.fareC * selectedIncomeTax) + (route.fareC * RESIDENCE_TAX) + dPort.pfcC + aPort.pfcC;
+        const ltzlC = route.fareC + dPort.pfcC + aPort.pfcC;
+
+        // 全体の合計に加算
         totalLT00 += (lt00A * adults) + (lt00C * children);
         totalLTZL += (ltzlA * adults) + (ltzlC * children);
-        detailHtml += `<div style="border-bottom:1px solid #eee; padding:12px 0;"><b style="color:var(--primary)">${dep} ⇄ ${arr}</b><br><span style="font-size:12px; color:var(--gray)">大人: LT00 ¥${Math.round(lt00A).toLocaleString()} / LTZL ¥${Math.round(ltzlA).toLocaleString()}<br>子供: LT00 ¥${Math.round(lt00C).toLocaleString()} / LTZL ¥${Math.round(ltzlC).toLocaleString()}</span></div>`;
+        
+        detailHtml += `
+          <div style="border-bottom:1px solid #eee; padding:12px 0;">
+            <b style="color:var(--primary)">${dep} ⇄ ${arr}</b><br>
+            <span style="font-size:12px; color:var(--gray)">
+              大人1名: LT00 ¥${Math.round(lt00A).toLocaleString()} / LTZL ¥${Math.round(ltzlA).toLocaleString()}<br>
+              子供1名: LT00 ¥${Math.round(lt00C).toLocaleString()} / LTZL ¥${Math.round(ltzlC).toLocaleString()}
+            </span>
+          </div>`;
       }
     }
   });
@@ -197,9 +219,5 @@ function openSettings() { document.getElementById('settingsModal').style.display
 function closeSettings() { document.getElementById('settingsModal').style.display = 'none'; }
 function toggleBreakdown() { const b = document.getElementById('breakdownSection'); const icon = document.getElementById('expandIcon'); const isShow = (b.style.display === 'block'); b.style.display = isShow ? 'none' : 'block'; icon.innerText = isShow ? 'add_circle' : 'remove_circle'; }
 </script>
-
-<style>
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-</style>
 </body>
 </html>
